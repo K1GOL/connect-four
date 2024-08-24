@@ -7,7 +7,7 @@ public class C4bot : IBot {
 
   public string Name => "C4bot";
   private readonly int searchDepth = 7;
-  // Hash map to store known states.
+  // Hash map to store known states. Key is hash of state and value is Node.
   private static Hashtable knownStates = new();
 
   private static Random rng = new();
@@ -47,15 +47,17 @@ public class C4bot : IBot {
 
         // Have we explored this node before?
         if (knownStates.ContainsKey(stateHash) && stack.Count > 1) {
-          node.advantage = (int)knownStates[stateHash]!;
+          node.advantage = ((Node)knownStates[stateHash]!).advantage!;
+          node.distance = ((Node)knownStates[stateHash]!).distance!;
           stack.RemoveAt(stack.Count - 1);
           continue;
         }
 
         // Check if we are at the maximum depth.
         if (node.depth > depth && stack.Count > 1) {
-          // Guess this node as a draw.
+          // Guess this node as a very distant draw.
           node.advantage = 0;
+          node.distance = depth;
           // Check if this node is the root node.
           if (stack.Count == 1) {
             break;
@@ -70,6 +72,9 @@ public class C4bot : IBot {
           posCount++;
           // Record winner.
           node.advantage = node.state.GetWinner();
+          // Set distance to zero.
+          node.distance = 0;
+
           string pathString = "";
           for (int i = 1; i < stack.Count; i++) {
             pathString += $"P{stack[i - 1].state.ToMove} -> {stack[i].move + 1} ";
@@ -95,11 +100,13 @@ public class C4bot : IBot {
           // Not a leaf.
           // Determine advantage.
           node.advantage = FindAdvantage(node);
+          // Determine distance.
+          node.distance = FindDistance(node);
           // Advantage determined, move to parent if exists.
           if (stack.Count > 1) {
             posCount++;
             // Cache result.
-            knownStates.Add(stateHash, node.advantage);
+            knownStates.Add(stateHash, node);
             stack.RemoveAt(stack.Count - 1);
             continue;
           } else {
@@ -116,30 +123,53 @@ public class C4bot : IBot {
       List<Node> children = startState.children!;
       
       string stateDescription = "it's a draw/undecided";
+      bool losing = false;
       if (startState.advantage == startState.state.ToMove) {
         stateDescription = "I'm winning";        
       } else if (startState.advantage != 0) {
         stateDescription = "I'm losing";
+        losing = true;
       }
       Console.WriteLine($"C4 > Current advantage is: {startState.advantage}. (I think {stateDescription})");
+
       string advantages = "";
       foreach (Node child in children!) {
-        advantages += $"{child.move + 1} -> {child.advantage} ";
+        advantages += $"[{child.move + 1} -> {child.advantage} in {child.distance}] ";
       }
       Console.WriteLine($"C4 > Advantages for each move: {advantages}");
-      // Return one of the moves that will lead to the advantage of the current player.
+
+      // Return one of the moves that will lead to the advantage of the current player in the fewest moves.
+      // When in a losing position, choose the one with the maximum distance and hope for a blunder.
       // If there are no children, return this state.
       // If there are multiple choices, pick at random (to avoid playing first column only when no winning path has been found).
-      List<Node> candidates = children.FindAll(child => child.advantage == startState.advantage);
+      int targetDistance = 0;
+      if (losing) {
+        targetDistance = (int)children.FindAll(child => child.advantage == startState.advantage).Max(child => child.distance)!;
+      } else {
+        targetDistance = (int)children.FindAll(child => child.advantage == startState.advantage).Min(child => child.distance)!;
+      }
+
+      List<Node> candidates = children.FindAll(child => child.advantage == startState.advantage && child.distance == targetDistance);
       Console.WriteLine($"C4 > Found {candidates.Count} candidate moves.");
+
       Node bestMove = children.Count > 0 ? candidates[rng.Next(0, candidates.Count)]! : startState;
       Console.WriteLine($"C4 > Chose move {bestMove.move + 1} with advantage {bestMove.advantage}");
+
       return ((int)bestMove.move!, (int)bestMove.advantage!);
     } catch (Exception e) {
       Console.WriteLine(e);
       return (0, 0);
     }
     
+  }
+
+  // Finds the distance to a winning state.
+  private static int FindDistance (Node node) {
+    // From the children of this node, find the lowest distance value.
+    if (node.children == null) {
+      return 0;
+    }
+    return (int)node.children.Min(child => child.distance)! + 1;
   }
 
   // Finds the advantage for a node whose every child has been explored.
@@ -202,6 +232,8 @@ class Node {
   public int depth;
   // Which move led to this state. Null if root.
   public int? move;
+  // How many moves away from an end state this node is.
+  public int? distance;
 
   public Node(Game state, Node? parent, int? move) {
     this.state = state;
